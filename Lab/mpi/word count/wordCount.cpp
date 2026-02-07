@@ -102,27 +102,28 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Check input
+    // Validate input
     if(rank == 0 && argc < 2) {
-        cout << "Usage: mpirun -np <p> ./wordcount phonebook1.txt [top10]\n";
+        cout << "Usage: mpirun -np <p> ./wordcount phonebook1.txt [K]\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    // Top-10 flag
-    bool top10_only = false;
-    if(argc >= 3 && string(argv[2]) == "top10") {
-        top10_only = true;
+    // Parse K (Top-K)
+    int K = -1;   // -1 means ALL
+    if(argc >= 3) {
+        K = atoi(argv[2]);
+        if(K <= 0) K = -1;
     }
 
     if(rank == 0) {
-        // ===== ROOT PROCESS =====
+        // ===== ROOT =====
         vector<string> all_names;
         read_phonebook(argv[1], all_names);
 
         int total = all_names.size();
         int chunk = (total + size - 1) / size;
 
-        // Send chunks to workers
+        // Send chunks
         for(int i = 1; i < size; i++) {
             string text = vector_to_string(all_names,
                                            i * chunk,
@@ -143,28 +144,29 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Sort results
+        // Sort
         vector<pair<string,int>> result(final_count.begin(), final_count.end());
         sort(result.begin(), result.end(),
              [](auto &a, auto &b){ return a.second > b.second; });
 
         // Write output
         ofstream out("wordCount.txt");
-        int limit = top10_only ? min(10, (int)result.size())
-                               : result.size();
+
+        int limit = (K == -1) ? result.size()
+                              : min(K, (int)result.size());
 
         for(int i = 0; i < limit; i++) {
             out << result[i].first << " " << result[i].second << "\n";
         }
         out.close();
 
-        if(top10_only)
-            cout << "Top 10 word counts written to wordCount.txt\n";
+        if(K == -1)
+            cout << "All word counts written to wordCount.txt\n";
         else
-            cout << "Full word count written to wordCount.txt\n";
+            cout << "Top " << K << " word counts written to wordCount.txt\n";
     }
     else {
-        // ===== WORKER PROCESS =====
+        // ===== WORKER =====
         string local_text = recv_string(0, TEXT_TAG);
         map<string,int> local_count = wordCount(local_text);
         send_string(map_to_string(local_count), 0, MAP_TAG);
