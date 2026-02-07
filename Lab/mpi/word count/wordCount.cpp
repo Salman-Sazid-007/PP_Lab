@@ -1,124 +1,175 @@
-#include<vector>
-#include<iostream>
-#include<sstream>
-#include<fstream>
-#include<mpi.h>
-#include<map>
-#include<algorithm>
+#include <vector>
+#include <iostream>
+#include <sstream>
+#include <fstream>
+#include <mpi.h>
+#include <map>
+#include <algorithm>
+#include <cctype>
+
 using namespace std;
 
-map<string,int> wordCount(const string text){
+#define TEXT_TAG 1
+#define MAP_TAG  2
+
+// Count alphabetic words only
+map<string,int> wordCount(const string &text) {
     map<string,int> cnt;
-    string clean;
-    for( char c :text){
-        if(isalnum(c)){
-            clean += tolower(c);
-        }
-        else{
-            if(!clean.empty()){
-                cnt[clean]++;
-                clean.clear();
+    string word;
+
+    for(char c : text) {
+        if(isalpha(c)) {
+            word += tolower(c);
+        } else {
+            if(!word.empty()) {
+                cnt[word]++;
+                word.clear();
             }
         }
     }
-     if(!clean.empty()){
-                cnt[clean]++;
-                clean.clear();
-            }
-        return cnt;
+    if(!word.empty()) {
+        cnt[word]++;
+    }
+    return cnt;
 }
-void send(const string &text,int receiver){
-    int len = text.size()+1;
-    MPI_Send(&len,1,MPI_INT,receiver,1,MPI_COMM_WORLD);
-    MPI_Send(text.c_str(),len,MPI_CHAR,receiver,1,MPI_COMM_WORLD);
+
+// Send string via MPI
+void send_string(const string &text, int receiver, int tag) {
+    int len = text.size() + 1;
+    MPI_Send(&len, 1, MPI_INT, receiver, tag, MPI_COMM_WORLD);
+    MPI_Send(text.c_str(), len, MPI_CHAR, receiver, tag, MPI_COMM_WORLD);
 }
-string receive(int sender){
+
+// Receive string via MPI
+string recv_string(int sender, int tag) {
     int len;
-    MPI_Recv(&len,1,MPI_INT,sender,1,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
-    char *buf =new char[len];
-    MPI_Recv(buf,len,MPI_CHAR,sender,1,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
-    string res(buf);
+    MPI_Recv(&len, 1, MPI_INT, sender, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    char *buf = new char[len];
+    MPI_Recv(buf, len, MPI_CHAR, sender, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    string result(buf);
     delete[] buf;
-    return res;
+    return result;
 }
-string vector_to_string(vector<string> &lines,int start,int end){
-    int total = lines.size();
+
+// Convert vector slice to string
+string vector_to_string(const vector<string> &lines, int start, int end) {
     string result;
-    for(int i=start;i<min(total,end);i++){
-        result += lines[i]+"\n";
-    }
-    return result; 
-}
-string map_to_string(map<string,int> mp){
-    string result;
-    for(auto &p:mp){
-        result += p.first + " " + to_string(p.second) +"\n";
+    for(int i = start; i < end && i < (int)lines.size(); i++) {
+        result += lines[i] + "\n";
     }
     return result;
 }
-map<string,int> string_to_map(const string &text){
-    map<string,int> result;
+
+// Convert map to string
+string map_to_string(const map<string,int> &mp) {
+    string result;
+    for(auto &p : mp) {
+        result += p.first + " " + to_string(p.second) + "\n";
+    }
+    return result;
+}
+
+// Convert string to map
+map<string,int> string_to_map(const string &text) {
+    map<string,int> mp;
     istringstream iss(text);
     string word;
     int count;
-    while(iss >> word >>count){
-        result[word]+=count;
+    while(iss >> word >> count) {
+        mp[word] += count;
     }
-    return result;
+    return mp;
 }
 
-void read_file(const string file,vector<string> &lines){
+// Read phonebook file (extract names only)
+void read_phonebook(const string &file, vector<string> &names) {
     ifstream f(file);
     string line;
-    while(getline(f,line)){
-        if(!line.empty()) lines.push_back(line);
+    while(getline(f, line)) {
+        int pos = line.find(",");
+        if(pos != string::npos) {
+            string name = line.substr(1, pos - 2);
+            names.push_back(name);
+        }
     }
 }
-int main(int argc ,char *argv[]){
-    MPI_Init(&argc,&argv);
-    int rank,size;
-    MPI_Comm_rank(MPI_COMM_WORLD,&rank);
-    MPI_Comm_size(MPI_COMM_WORLD,&size);
-    if(rank==0){
-      if(argc<2){
-            cout<<"<filename>\n";
-            MPI_Finalize();
-            return 1;
-        }
+
+int main(int argc, char *argv[]) {
+
+    MPI_Init(&argc, &argv);
+
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    // Check input
+    if(rank == 0 && argc < 2) {
+        cout << "Usage: mpirun -np <p> ./wordcount phonebook1.txt [top10]\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
-    if(rank == 0){
-        vector<string> all_lines;
-        read_file(argv[1],all_lines);
-        int total = all_lines.size();
-        int chunk = (total+size-1)/size;
-        for(int i=1;i<size;i++){
-            string text = vector_to_string(all_lines,i*chunk,(i+1)*chunk);
-            send(text,i);
+
+    // Top-10 flag
+    bool top10_only = false;
+    if(argc >= 3 && string(argv[2]) == "top10") {
+        top10_only = true;
+    }
+
+    if(rank == 0) {
+        // ===== ROOT PROCESS =====
+        vector<string> all_names;
+        read_phonebook(argv[1], all_names);
+
+        int total = all_names.size();
+        int chunk = (total + size - 1) / size;
+
+        // Send chunks to workers
+        for(int i = 1; i < size; i++) {
+            string text = vector_to_string(all_names,
+                                           i * chunk,
+                                           (i + 1) * chunk);
+            send_string(text, i, TEXT_TAG);
         }
-        map<string,int> final_count = wordCount(vector_to_string(all_lines,0,chunk));
-        for(int i=1;i<size;i++){
-            string text = receive(i);
-            map<string,int> tmp = string_to_map(text);
-            for(auto &p:tmp){
-                final_count[p.first]+=p.second;
+
+        // Root chunk
+        map<string,int> final_count =
+            wordCount(vector_to_string(all_names, 0, chunk));
+
+        // Receive worker results
+        for(int i = 1; i < size; i++) {
+            string text = recv_string(i, MAP_TAG);
+            map<string,int> local_map = string_to_map(text);
+            for(auto &p : local_map) {
+                final_count[p.first] += p.second;
             }
         }
-        vector<pair<string,int>> v(final_count.begin(),final_count.end());
-        sort(v.begin(),v.end(),[](auto &a,auto &b){
-            return a.second>b.second;
-        });
 
+        // Sort results
+        vector<pair<string,int>> result(final_count.begin(), final_count.end());
+        sort(result.begin(), result.end(),
+             [](auto &a, auto &b){ return a.second > b.second; });
+
+        // Write output
         ofstream out("wordCount.txt");
-        for(auto &p:v){
-        out<<p.first<<" "<<to_string(p.second)<<"\n";;
+        int limit = top10_only ? min(10, (int)result.size())
+                               : result.size();
+
+        for(int i = 0; i < limit; i++) {
+            out << result[i].first << " " << result[i].second << "\n";
         }
         out.close();
+
+        if(top10_only)
+            cout << "Top 10 word counts written to wordCount.txt\n";
+        else
+            cout << "Full word count written to wordCount.txt\n";
     }
-    else{
-        string local_text = receive(0);
+    else {
+        // ===== WORKER PROCESS =====
+        string local_text = recv_string(0, TEXT_TAG);
         map<string,int> local_count = wordCount(local_text);
-        send(map_to_string(local_count),0);
+        send_string(map_to_string(local_count), 0, MAP_TAG);
     }
+
     MPI_Finalize();
     return 0;
 }
