@@ -21,16 +21,16 @@ int main(int argc, char **argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     int K = 120, M = 50, N = 50, P = 50;
-    // if(rank == 0) {
-    //     printf("Enter Number of Matrices: ");
-    //     scanf("%d", &K);
-    //     printf("Enter Number of Rows in Matrix A: ");
-    //     scanf("%d", &M);
-    //     printf("Enter Number of Columns in Matrix A: ");
-    //     scanf("%d", &N);
-    //     printf("Enter Number of Columns in Matrix B: ");
-    //     scanf("%d", &P);
-    // }
+    if(rank == 0) {
+         printf("Enter Number of Matrices:\n ");
+         scanf("%d", &K);
+         printf("Enter Number of Rows in Matrix A:\n ");
+         scanf("%d", &M);
+         printf("Enter Number of Columns in Matrix A: \n");
+         scanf("%d", &N);
+         printf("Enter Number of Columns in Matrix B: \n");
+         scanf("%d", &P);
+    }
 
     MPI_Bcast(&K, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&M, 1, MPI_INT, 0, MPI_COMM_WORLD);
